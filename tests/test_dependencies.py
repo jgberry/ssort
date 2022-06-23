@@ -32,4 +32,4 @@ def test_dependencies_ordered_by_first_use():
         statements, on_unresolved=_unreachable, on_wildcard_import=_unreachable
     )
 
-    assert list(graph.dependencies[a]) == [b, c]
+    assert graph.successors(a) == {b, c}

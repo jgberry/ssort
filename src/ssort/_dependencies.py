@@ -18,8 +18,8 @@ def module_statements_graph(statements, *, on_unresolved, on_wildcard_import):
         contain a link for the missing requirement.
     :param on_wildcard_import:
         A callback that should be invoked if ssort detects a `*` import.  If no
-        exception is raised, all dangling references will be pointed back to the
-        last `*` import.
+        exception is raised, all dangling references will be pointed back to
+        the last `*` import.
 
     :returns:
         A `Graph` mapping from statements to the set of statements that they
@@ -87,7 +87,7 @@ def module_statements_graph(statements, *, on_unresolved, on_wildcard_import):
 
         if unresolved:
             # Not safe to attempt to re-order in the event of unresolved
-            # dependencies.  A typo could cause a statement to be moved ahead of
+            # dependencies. A typo could cause a statement to be moved ahead of
             # something that it should depend on.
             return None
 
@@ -98,7 +98,7 @@ def module_statements_graph(statements, *, on_unresolved, on_wildcard_import):
     for statement in statements:
         for requirement in statement.requirements():
             if resolved[requirement] is not None:
-                graph.add_dependency(statement, resolved[requirement])
+                graph.add_edge(statement, resolved[requirement], True)
 
     # Add links between statements that overwrite the same binding to make sure
     # that bindings are always applied in the same order.
@@ -106,7 +106,7 @@ def module_statements_graph(statements, *, on_unresolved, on_wildcard_import):
     for statement in statements:
         for name in statement.bindings():
             if name in scope:
-                graph.add_dependency(statement, scope[name])
+                graph.add_edge(statement, scope[name], True)
             scope[name] = statement
 
     return graph
@@ -166,7 +166,7 @@ def class_statements_initialisation_graph(statements):
             if requirement.name not in scope:
                 continue
 
-            graph.add_dependency(statement, scope[requirement.name])
+            graph.add_edge(statement, scope[requirement.name], True)
 
         for name in statement.bindings():
             scope[name] = statement
@@ -179,8 +179,8 @@ def class_statements_runtime_graph(statements, *, ignore_public):
     Attempts to construct a graph of the soft, runtime dependencies between the
     methods of a class.
 
-    The graph is inferred by looking for attribute access on the `self` argument
-    of methods.
+    The graph is inferred by looking for attribute access on the `self`
+    argument of methods.
 
     :param statements:
         An ordered list of opaque `Statement` objects from which to construct
@@ -210,6 +210,6 @@ def class_statements_runtime_graph(statements, *, ignore_public):
                 continue
             if name not in scope:
                 continue
-            graph.add_dependency(statement, scope[name])
+            graph.add_edge(statement, scope[name], True)
 
     return graph

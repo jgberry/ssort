@@ -1,87 +1,93 @@
 from __future__ import annotations
 
-from typing import Callable, Generic, Hashable, TypeVar
+from typing import AbstractSet, Callable, Generic, Hashable, TypeVar
 
 from ssort._utils import sort_key_from_iter
 
-_T = TypeVar("_T", bound=Hashable)
+_N = TypeVar("_N", bound=Hashable)
+_E = TypeVar("_E")
 
 
-class Graph(Generic[_T]):
+class Graph(Generic[_N, _E]):
     def __init__(self) -> None:
-        self.nodes: list[_T] = []
-        self.dependencies: dict[_T, list[_T]] = {}
-        self.dependants: dict[_T, list[_T]] = {}
+        self._out_edges: dict[_N, dict[_N, _E]] = {}
+        self._in_edges: dict[_N, dict[_N, _E]] = {}
 
-    def add_node(self, identifier: _T) -> None:
-        if identifier not in self.nodes:
-            self.nodes.append(identifier)
-            self.dependencies[identifier] = []
-            self.dependants[identifier] = []
+    @property
+    def nodes(self) -> AbstractSet[_N]:
+        return self._out_edges.keys()
 
-    def add_dependency(self, node: _T, dependency: _T) -> None:
-        assert dependency in self.nodes
+    def successors(self, node: _N, /) -> AbstractSet[_N]:
+        return self._out_edges[node].keys()
 
-        if dependency not in self.dependencies[node]:
-            self.dependencies[node].append(dependency)
-            self.dependants[dependency].append(node)
+    def predecessors(self, node: _N, /) -> AbstractSet[_N]:
+        return self._in_edges[node].keys()
 
-    def remove_node(self, node: _T) -> None:
-        self.nodes.remove(node)
-        del self.dependencies[node]
-        del self.dependants[node]
+    def has_edge(self, origin: _N, destination: _N, /) -> bool:
+        out_edges = self._out_edges.get(origin)
+        return out_edges is not None and destination in out_edges
 
-        for other in self.nodes:
-            try:
-                self.dependencies[other].remove(node)
-            except ValueError:
-                pass
+    def edge(self, origin: _N, destination: _N, /) -> _E:
+        return self._out_edges[origin][destination]
 
-            try:
-                self.dependants[other].remove(node)
-            except ValueError:
-                pass
+    def add_node(self, node: _N, /) -> None:
+        self._out_edges.setdefault(node, {})
+        self._in_edges.setdefault(node, {})
 
-    def remove_dependency(self, node: _T, dependency: _T) -> None:
-        assert dependency in self.nodes
+    def add_edge(self, origin: _N, destination: _N, edge: _E, /) -> None:
+        # Avoid updating state in case of KeyError
+        out_edges = self._out_edges[origin]
+        in_edges = self._in_edges[destination]
 
-        try:
-            self.dependencies[node].remove(dependency)
-        except ValueError:
-            pass
+        out_edges[destination] = in_edges[origin] = edge
 
-        try:
-            self.dependants[dependency].remove(node)
-        except ValueError:
-            pass
+    def remove_node(self, node: _N, /) -> None:
+        # Avoid updating state in case of KeyError. Create copies to properly
+        # handle removal of self-referencing nodes.
+        out_edges = dict(self._out_edges[node])
+        in_edges = dict(self._in_edges[node])
 
-    def update(self, other: Graph[_T]) -> None:
+        for destination in out_edges:
+            self._in_edges[destination].pop(node, None)  # type: ignore
+        for origin in in_edges:
+            self._out_edges[origin].pop(node, None)  # type: ignore
+
+        self._out_edges.pop(node)
+        self._in_edges.pop(node)
+
+    def remove_edge(self, origin: _N, destination: _N, /) -> None:
+        # Avoid updating state in case of KeyError
+        out_edges = self._out_edges[origin]
+        in_edges = self._in_edges[destination]
+
+        out_edges.pop(destination, None)  # type: ignore
+        in_edges.pop(origin, None)  # type: ignore
+
+    def update(self, other: Graph[_N, _E], /) -> None:
         for node in other.nodes:
             self.add_node(node)
+            self._out_edges[node].update(other._out_edges[node])
+            self._in_edges[node].update(other._in_edges[node])
 
-        for node in other.nodes:
-            for dependency in other.dependencies[node]:
-                self.add_dependency(node, dependency)
-
-    def copy(self) -> Graph[_T]:
-        dup: Graph[_T] = Graph()
-        dup.update(self)
-        return dup
+    def copy(self) -> Graph[_N, _E]:
+        copy: Graph[_N, _E] = Graph()
+        copy.update(self)
+        return copy
 
 
-def _remove_self_references(graph: Graph[_T]) -> None:
+def _remove_self_references(graph: Graph[_N, _E]) -> None:
     for node in graph.nodes:
-        graph.remove_dependency(node, node)
+        graph.remove_edge(node, node)
 
 
-def _find_cycle(graph: Graph[_T]) -> list[_T] | None:
+def _find_cycle(graph: Graph[_N, _E]) -> list[_N] | None:
     processed = set()
     for node in graph.nodes:
         if node in processed:
             continue
 
         in_stack = {node}
-        stack = [(node, set(graph.dependencies[node]))]
+        stack = [(node, set(graph.successors(node)))]
 
         while stack:
             top_node, top_dependencies = stack[-1]
@@ -100,13 +106,15 @@ def _find_cycle(graph: Graph[_T]) -> list[_T] | None:
                     stack.pop()
                 return cycle
             if dependency not in processed:
-                stack.append((dependency, set(graph.dependencies[dependency])))
+                stack.append((dependency, set(graph.successors(dependency))))
                 in_stack.add(dependency)
 
     return None
 
 
-def replace_cycles(graph: Graph[_T], *, key: Callable[[_T], int]) -> None:
+def replace_cycles(
+    graph: Graph[_N, bool], *, key: Callable[[_N], int]
+) -> None:
     """
     Finds all cycles and replaces them with forward links that keep them from
     being re-ordered.
@@ -119,35 +127,35 @@ def replace_cycles(graph: Graph[_T], *, key: Callable[[_T], int]) -> None:
 
         for node in cycle:
             for dependency in cycle:
-                graph.remove_dependency(node, dependency)
+                graph.remove_edge(node, dependency)
 
         # TODO this is a bit of an abstraction leak.  Need a better way to tell
         # this function what the safe order is.
         nodes = iter(sorted(cycle, key=key))
         prev = next(nodes)
         for node in nodes:
-            graph.add_dependency(node, prev)
+            graph.add_edge(node, prev, True)
             prev = node
 
 
-def is_topologically_sorted(nodes: list[_T], graph: Graph[_T]) -> bool:
+def is_topologically_sorted(nodes: list[_N], graph: Graph[_N, _E]) -> bool:
     visited = set()
     for node in nodes:
         visited.add(node)
-        for dependency in graph.dependencies[node]:
+        for dependency in graph.successors(node):
             if dependency not in visited:
                 return False
     return True
 
 
 def topological_sort(
-    target: Graph[_T] | list[_T], /, *, graph: Graph[_T] | None = None
-) -> list[_T]:
+    target: Graph[_N, _E] | list[_N], /, *, graph: Graph[_N, _E] | None = None
+) -> list[_N]:
     if graph is None:
         if not isinstance(target, Graph):
             raise TypeError("target must be a Graph")
         graph = target
-        nodes = target.nodes
+        nodes = list(target.nodes)
     else:
         if not isinstance(target, list):
             raise TypeError("target must be a list")
@@ -159,17 +167,17 @@ def topological_sort(
 
     key = sort_key_from_iter(nodes)
 
-    pending = [node for node in graph.nodes if not graph.dependants[node]]
+    pending = [node for node in graph.nodes if not graph.predecessors(node)]
 
     result = []
     while pending:
         pending = list(sorted(pending, key=key))
         node = pending.pop()
-        dependencies = remaining.dependencies[node]
+        dependencies = remaining.successors(node)
         remaining.remove_node(node)
 
         for dependency in dependencies:
-            if not remaining.dependants[dependency]:
+            if not remaining.predecessors(dependency):
                 if dependency not in pending:
                     pending.append(dependency)
 
