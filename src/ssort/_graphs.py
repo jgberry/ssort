@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import AbstractSet, Callable, Generic, Hashable, TypeVar
+from collections.abc import Set
+from typing import Callable, Generic, Hashable, TypeVar
 
 from ssort._utils import sort_key_from_iter
 
@@ -14,13 +15,13 @@ class Graph(Generic[_N, _E]):
         self._in_edges: dict[_N, dict[_N, _E]] = {}
 
     @property
-    def nodes(self) -> AbstractSet[_N]:
+    def nodes(self) -> Set[_N]:
         return self._out_edges.keys()
 
-    def successors(self, node: _N, /) -> AbstractSet[_N]:
+    def successors(self, node: _N, /) -> Set[_N]:
         return self._out_edges[node].keys()
 
-    def predecessors(self, node: _N, /) -> AbstractSet[_N]:
+    def predecessors(self, node: _N, /) -> Set[_N]:
         return self._in_edges[node].keys()
 
     def has_edge(self, origin: _N, destination: _N, /) -> bool:
@@ -75,12 +76,12 @@ class Graph(Generic[_N, _E]):
         return copy
 
 
-def _remove_self_references(graph: Graph[_N, _E]) -> None:
+def _remove_self_references(graph: Graph[_N, _E], /) -> None:
     for node in graph.nodes:
         graph.remove_edge(node, node)
 
 
-def _find_cycle(graph: Graph[_N, _E]) -> list[_N] | None:
+def _find_cycle(graph: Graph[_N, _E], /) -> list[_N] | None:
     processed = set()
     for node in graph.nodes:
         if node in processed:
